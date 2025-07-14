@@ -27,6 +27,12 @@ pub trait Storable {
     /// The size bounds of the type.
     const BOUND: Bound;
 
+    /// Returns bytes that preserve the same ordering as [`Ord`], if available.
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        None
+    }
+
     /// Like `to_bytes`, but checks that bytes conform to declared bounds.
     fn to_bytes_checked(&self) -> Cow<'_, [u8]> {
         let bytes = self.to_bytes();
@@ -342,6 +348,11 @@ impl Storable for () {
         // set incorrectly and it cannot be fixed to maintain backward-compatibility.
         is_fixed_size: false,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(&[]))
+    }
 }
 
 impl Storable for Vec<u8> {
@@ -361,6 +372,11 @@ impl Storable for Vec<u8> {
     }
 
     const BOUND: Bound = Bound::Unbounded;
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(self))
+    }
 }
 
 impl Storable for String {
@@ -380,6 +396,11 @@ impl Storable for String {
     }
 
     const BOUND: Bound = Bound::Unbounded;
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(self.as_bytes()))
+    }
 }
 
 impl Storable for u128 {
@@ -402,6 +423,11 @@ impl Storable for u128 {
         max_size: 16,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Owned(self.to_be_bytes().to_vec()))
+    }
 }
 
 impl Storable for u64 {
@@ -424,6 +450,11 @@ impl Storable for u64 {
         max_size: 8,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Owned(self.to_be_bytes().to_vec()))
+    }
 }
 
 impl Storable for f64 {
@@ -468,6 +499,11 @@ impl Storable for u32 {
         max_size: 4,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Owned(self.to_be_bytes().to_vec()))
+    }
 }
 
 impl Storable for f32 {
@@ -512,6 +548,11 @@ impl Storable for u16 {
         max_size: 2,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Owned(self.to_be_bytes().to_vec()))
+    }
 }
 
 impl Storable for u8 {
@@ -534,6 +575,11 @@ impl Storable for u8 {
         max_size: 1,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Owned(self.to_be_bytes().to_vec()))
+    }
 }
 
 impl Storable for bool {
@@ -559,6 +605,11 @@ impl Storable for bool {
         max_size: 1,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Owned(if *self { 1u8 } else { 0u8 }.to_be_bytes().to_vec()))
+    }
 }
 
 impl<const N: usize> Storable for [u8; N] {
@@ -584,6 +635,11 @@ impl<const N: usize> Storable for [u8; N] {
         max_size: N as u32,
         is_fixed_size: true,
     };
+
+    #[inline]
+    fn ord_bytes(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(&self[..]))
+    }
 }
 
 impl<T: Storable> Storable for Reverse<T> {

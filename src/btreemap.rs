@@ -308,7 +308,7 @@ where
         } else {
             // The memory already contains a BTreeMap. Load it, making sure
             // we don't migrate the BTreeMap to v2.
-            BTreeMap::load_helper(memory, false)
+            BTreeMap::load_inner(memory, false, None)
         }
     }
 
@@ -511,7 +511,7 @@ where
             let mut root = self.load_node(self.root_addr);
 
             // Check if the key already exists in the root.
-            if let Ok(idx) = root.search(&key, self.memory()) {
+            if let Ok(idx) = self.node_search(&root, &key) {
                 // Key found, replace its value and return the old one.
                 return Some(V::from_bytes(Cow::Owned(
                     self.update_value(&mut root, idx, value),
@@ -554,7 +554,7 @@ where
         assert!(!node.is_full());
 
         // Look for the key in the node.
-        match node.search(&key, self.memory()) {
+        match self.node_search(&node, &key) {
             Ok(idx) => {
                 // Key found, replace its value and return the old one.
                 Some(self.update_value(&mut node, idx, value))
@@ -583,7 +583,7 @@ where
 
                         if child.is_full() {
                             // Check if the key already exists in the child.
-                            if let Ok(idx) = child.search(&key, self.memory()) {
+                            if let Ok(idx) = self.node_search(&child, &key) {
                                 // Key found, replace its value and return the old one.
                                 return Some(self.update_value(&mut child, idx, value));
                             }
@@ -593,7 +593,7 @@ where
 
                             // The children have now changed. Search again for
                             // the child where we need to store the entry in.
-                            let idx = node.search(&key, self.memory()).unwrap_or_else(|idx| idx);
+                            let idx = self.node_search(&node, &key).unwrap_or_else(|idx| idx);
                             child = self.load_node(node.child(idx));
                         }
 
@@ -673,7 +673,7 @@ where
     {
         let mut node = self.load_node(node_addr);
         // Look for the key in the current node.
-        match node.search(key, self.memory()) {
+        match self.node_search(&node, key) {
             Ok(idx) => Some(f(&mut node, idx)), // Key found: apply `f`.
             Err(idx) => match node.node_type() {
                 NodeType::Leaf => None, // At a leaf: key not present.
@@ -738,6 +738,10 @@ where
         self.allocator.memory()
     }
 
+    fn node_search(&self, node: &Node<K>, key: &K) -> Result<usize, usize> {
+        node.search(key, self.memory())
+    }
+
     fn allocator_mut(&mut self) -> &mut Allocator<M> {
         &mut self.allocator
     }
@@ -790,7 +794,7 @@ where
 
         match node.node_type() {
             NodeType::Leaf => {
-                match node.search(key, self.memory()) {
+                match self.node_search(&node, key) {
                     Ok(idx) => {
                         // Case 1: The node is a leaf node and the key exists in it.
                         // This is the simplest case. The key is removed from the leaf.
@@ -817,7 +821,7 @@ where
                 }
             }
             NodeType::Internal => {
-                match node.search(key, self.memory()) {
+                match self.node_search(&node, key) {
                     Ok(idx) => {
                         // Case 2: The node is an internal node and the key exists in it.
 
@@ -1481,7 +1485,7 @@ mod test {
             // Test with V2 migrated from V1.
             let mem = make_memory();
             let tree_v1: BTreeMap<K, V, _> = BTreeMap::new_v1(mem);
-            let tree_v2_migrated = BTreeMap::load_helper(tree_v1.into_memory(), true);
+            let tree_v2_migrated = BTreeMap::load_inner(tree_v1.into_memory(), true, None);
             f(tree_v2_migrated);
         }
 
