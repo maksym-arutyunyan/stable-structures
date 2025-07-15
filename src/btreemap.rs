@@ -1157,8 +1157,8 @@ where
     /// map.insert(1, "one".to_string());
     /// map.insert(2, "two".to_string());
     ///
-    /// for (key, value) in map.iter() {
-    ///     println!("{}: {}", key, value);
+    /// for entry in map.iter() {
+    ///     println!("{}: {}", entry.key(), entry.value());
     /// }
     /// ```
     pub fn iter(&self) -> Iter<'_, K, V, M> {
@@ -1180,8 +1180,8 @@ where
     /// map.insert(3, "three".to_string());
     ///
     /// // Get entries with keys between 1 and 3 (inclusive)
-    /// for (key, value) in map.range((Bound::Included(1), Bound::Included(3))) {
-    ///     println!("{}: {}", key, value);
+    /// for entry in map.range((Bound::Included(1), Bound::Included(3))) {
+    ///     println!("{}: {}", entry.key(), entry.value());
     /// }
     /// ```
     pub fn range(&self, key_range: impl RangeBounds<K>) -> Iter<'_, K, V, M> {
@@ -1364,9 +1364,11 @@ mod test {
         iter.map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 
-    /// A helper function to collect owned key/value pairs into a `Vec`.
-    fn collect<K: Clone, V: Clone>(it: impl Iterator<Item = (K, V)>) -> Vec<(K, V)> {
-        it.collect()
+    /// A helper function to collect entries into a `Vec` of `(K, V)`.
+    fn collect<'a, K: Clone, V: Clone, M: Memory>(
+        it: impl Iterator<Item = crate::btreemap::iter::Entry<'a, K, V, M>>,
+    ) -> Vec<(K, V)> {
+        it.map(|e| (e.key(), e.value())).collect()
     }
 
     /// Returns a fixed‑size buffer for the given u32.
@@ -2679,7 +2681,7 @@ mod test {
             }
 
             // Check range [0, MID): should yield exactly the first MID entries.
-            let keys: Vec<_> = btree.range(key(0)..key(MID)).collect();
+            let keys: Vec<_> = collect(btree.range(key(0)..key(MID)));
             assert_eq!(keys.len(), MID as usize);
             for (i, (k, v)) in keys.into_iter().enumerate() {
                 let j = i as u32;
@@ -2688,7 +2690,7 @@ mod test {
             }
 
             // Check range [MID, TOTAL): should yield the remaining entries.
-            let keys: Vec<_> = btree.range(key(MID)..).collect();
+            let keys: Vec<_> = collect(btree.range(key(MID)..));
             assert_eq!(keys.len(), (TOTAL - MID) as usize);
             for (i, (k, v)) in keys.into_iter().enumerate() {
                 let j = MID + i as u32;
@@ -2979,14 +2981,20 @@ mod test {
                 btree.insert(key(j), value(j));
                 for i in 0..=j {
                     assert_eq!(
-                        btree.iter_from_prev_key(&key(i + 1)).next(),
+                        btree
+                            .iter_from_prev_key(&key(i + 1))
+                            .next()
+                            .map(|e| (e.key(), e.value())),
                         Some((key(i), value(i))),
                         "failed to get an upper bound for key({})",
                         i + 1
                     );
                 }
                 assert_eq!(
-                    btree.iter_from_prev_key(&key(0)).next(),
+                    btree
+                        .iter_from_prev_key(&key(0))
+                        .next()
+                        .map(|e| (e.key(), e.value())),
                     None,
                     "key(0) must not have an upper bound"
                 );

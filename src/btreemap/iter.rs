@@ -3,6 +3,7 @@ use super::{
     BTreeMap,
 };
 use crate::{types::NULL, Address, Memory, Storable};
+use std::cell::OnceCell;
 use std::borrow::Cow;
 use std::ops::{Bound, RangeBounds};
 
@@ -446,6 +447,45 @@ where
     }
 }
 
+/// An entry yielded by [`Iter`]. Provides lazy access to the value.
+pub struct Entry<'a, K, V, M>
+where
+    K: Storable + Ord + Clone,
+    V: Storable,
+    M: Memory,
+{
+    pub(crate) map: &'a BTreeMap<K, V, M>,
+    pub(crate) node_addr: Address,
+    pub(crate) node: OnceCell<Node<K>>,
+    pub(crate) idx: usize,
+}
+
+impl<'a, K, V, M> Entry<'a, K, V, M>
+where
+    K: Storable + Ord + Clone,
+    V: Storable,
+    M: Memory,
+{
+    fn node(&self) -> &Node<K> {
+        self.node.get_or_init(|| self.map.load_node(self.node_addr))
+    }
+
+    /// Loads and returns the entry key.
+    pub fn key(&self) -> K {
+        self.node()
+            .key(self.idx, self.map.memory())
+            .clone()
+    }
+
+    /// Loads and returns the entry value.
+    pub fn value(&self) -> V {
+        let encoded_value = self
+            .node()
+            .value(self.idx, self.map.memory());
+        V::from_bytes(Cow::Borrowed(encoded_value))
+    }
+}
+
 pub struct Iter<'a, K, V, M>(IterInternal<'a, K, V, M>)
 where
     K: Storable + Ord + Clone,
@@ -458,12 +498,15 @@ where
     V: Storable,
     M: Memory,
 {
-    type Item = (K, V);
+    type Item = Entry<'_, K, V, M>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_map(|node, entry_idx| {
-            let (key, encoded_value) = node.entry(entry_idx, self.0.map.memory());
-            (key.clone(), V::from_bytes(Cow::Borrowed(encoded_value)))
+        let map = self.0.map;
+        self.0.next_map(|node, entry_idx| Entry {
+            map,
+            node_addr: node.address(),
+            node: OnceCell::new(),
+            idx: entry_idx,
         })
     }
 
@@ -482,9 +525,12 @@ where
     M: Memory,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.0.next_back_map(|node, entry_idx| {
-            let (key, encoded_value) = node.entry(entry_idx, self.0.map.memory());
-            (key.clone(), V::from_bytes(Cow::Borrowed(encoded_value)))
+        let map = self.0.map;
+        self.0.next_back_map(|node, entry_idx| Entry {
+            map,
+            node_addr: node.address(),
+            node: OnceCell::new(),
+            idx: entry_idx,
         })
     }
 }
@@ -624,9 +670,9 @@ mod test {
         }
 
         let mut i = 0;
-        for (key, value) in btree.iter() {
-            assert_eq!(key, i);
-            assert_eq!(value, i + 1);
+        for entry in btree.iter() {
+            assert_eq!(entry.key(), i);
+            assert_eq!(entry.value(), i + 1);
             i += 1;
         }
 
@@ -645,9 +691,9 @@ mod test {
 
         // Iteration should be in ascending order.
         let mut i = 0;
-        for (key, value) in btree.iter() {
-            assert_eq!(key, i);
-            assert_eq!(value, i + 1);
+        for entry in btree.iter() {
+            assert_eq!(entry.key(), i);
+            assert_eq!(entry.value(), i + 1);
             i += 1;
         }
 
@@ -666,9 +712,9 @@ mod test {
 
         // Iteration should be in ascending order.
         let mut i = 10;
-        for (key, value) in btree.range(10..90) {
-            assert_eq!(key, i);
-            assert_eq!(value, i + 1);
+        for entry in btree.range(10..90) {
+            assert_eq!(entry.key(), i);
+            assert_eq!(entry.value(), i + 1);
             i += 1;
         }
 
@@ -687,10 +733,10 @@ mod test {
 
         // Iteration should be in descending order.
         let mut i = 100;
-        for (key, value) in btree.iter().rev() {
+        for entry in btree.iter().rev() {
             i -= 1;
-            assert_eq!(key, i);
-            assert_eq!(value, i + 1);
+            assert_eq!(entry.key(), i);
+            assert_eq!(entry.value(), i + 1);
         }
 
         assert_eq!(i, 0);
@@ -708,10 +754,10 @@ mod test {
 
         // Iteration should be in descending order.
         let mut i = 80;
-        for (key, value) in btree.range(20..80).rev() {
+        for entry in btree.range(20..80).rev() {
             i -= 1;
-            assert_eq!(key, i);
-            assert_eq!(value, i + 1);
+            assert_eq!(entry.key(), i);
+            assert_eq!(entry.value(), i + 1);
         }
 
         assert_eq!(i, 20);
@@ -730,13 +776,13 @@ mod test {
         let mut iter = btree.iter();
 
         for i in 0..50 {
-            let (key, value) = iter.next().unwrap();
-            assert_eq!(key, i);
-            assert_eq!(value, i + 1);
+            let entry = iter.next().unwrap();
+            assert_eq!(entry.key(), i);
+            assert_eq!(entry.value(), i + 1);
 
-            let (key, value) = iter.next_back().unwrap();
-            assert_eq!(key, 99 - i);
-            assert_eq!(value, 100 - i);
+            let entry = iter.next_back().unwrap();
+            assert_eq!(entry.key(), 99 - i);
+            assert_eq!(entry.value(), 100 - i);
         }
 
         assert!(iter.next().is_none());
@@ -756,13 +802,13 @@ mod test {
         let mut iter = btree.range(30..70);
 
         for i in 0..20 {
-            let (key, value) = iter.next().unwrap();
-            assert_eq!(key, 30 + i);
-            assert_eq!(value, 31 + i);
+            let entry = iter.next().unwrap();
+            assert_eq!(entry.key(), 30 + i);
+            assert_eq!(entry.value(), 31 + i);
 
-            let (key, value) = iter.next_back().unwrap();
-            assert_eq!(key, 69 - i);
-            assert_eq!(value, 70 - i);
+            let entry = iter.next_back().unwrap();
+            assert_eq!(entry.key(), 69 - i);
+            assert_eq!(entry.value(), 70 - i);
         }
 
         assert!(iter.next().is_none());
