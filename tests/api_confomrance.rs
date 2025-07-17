@@ -56,7 +56,7 @@ fn api_conformance_btreemap() {
     }
 
     // Iterators.
-    // Note: stable.iter() yields Entry, std.iter() yields (&K, &V)
+    // Note: stable.iter() yields LazyEntry, std.iter() yields (&K, &V)
     let stable_items: std::vec::Vec<_> = stable.iter().map(|e| (e.key(), e.value())).collect();
     let std_items: std::vec::Vec<_> = std.iter().map(|(k, v)| (*k, v.clone())).collect();
     assert_eq!(stable_items, std_items);

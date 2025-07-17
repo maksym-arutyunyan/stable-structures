@@ -3,14 +3,14 @@ use super::{
     BTreeMap,
 };
 use crate::{types::NULL, Address, Memory, Storable};
-use std::cell::OnceCell;
+use std::rc::Rc;
 use std::borrow::Cow;
 use std::ops::{Bound, RangeBounds};
 
 /// An indicator of the current position in the map.
 pub(crate) enum Cursor<K: Storable + Ord + Clone> {
     Address(Address),
-    Node { node: Box<Node<K>>, next: Index },
+    Node { node: Rc<Node<K>>, next: Index },
 }
 
 /// An index into a node's child or entry.
@@ -101,7 +101,7 @@ where
                                 // We found the key exactly matching the left bound.
                                 // Here is where we'll start the iteration.
                                 self.forward_cursors.push(Cursor::Node {
-                                    node: Box::new(node),
+                                    node: Rc::new(node),
                                     next: Index::Entry(idx),
                                 });
                                 break;
@@ -119,7 +119,7 @@ where
                                     && self.range.contains(node.key(idx + 1, self.map.memory()))
                                 {
                                     self.forward_cursors.push(Cursor::Node {
-                                        node: Box::new(node),
+                                        node: Rc::new(node),
                                         next: Index::Entry(idx + 1),
                                     });
                                 }
@@ -157,7 +157,7 @@ where
                                 && self.range.contains(node.key(idx, self.map.memory()))
                             {
                                 self.forward_cursors.push(Cursor::Node {
-                                    node: Box::new(node),
+                                    node: Rc::new(node),
                                     next: Index::Entry(idx),
                                 });
                             }
@@ -197,7 +197,7 @@ where
                                 // We found the key exactly matching the right bound.
                                 // Here is where we'll start the iteration.
                                 self.backward_cursors.push(Cursor::Node {
-                                    node: Box::new(node),
+                                    node: Rc::new(node),
                                     next: Index::Entry(idx),
                                 });
                                 break;
@@ -215,7 +215,7 @@ where
                                     && self.range.contains(node.key(idx - 1, self.map.memory()))
                                 {
                                     self.backward_cursors.push(Cursor::Node {
-                                        node: Box::new(node),
+                                        node: Rc::new(node),
                                         next: Index::Entry(idx - 1),
                                     });
                                 }
@@ -251,7 +251,7 @@ where
                             if idx > 0 && self.range.contains(node.key(idx - 1, self.map.memory()))
                             {
                                 self.backward_cursors.push(Cursor::Node {
-                                    node: Box::new(node),
+                                    node: Rc::new(node),
                                     next: Index::Entry(idx - 1),
                                 });
                             }
@@ -294,7 +294,7 @@ where
                             // Iterate on leaf nodes starting from the first entry.
                             NodeType::Leaf => Index::Entry(0),
                         },
-                        node: Box::new(node),
+                        node: Rc::new(node),
                     });
                 }
                 self.next_map(map)
@@ -380,7 +380,7 @@ where
                     } {
                         self.backward_cursors.push(Cursor::Node {
                             next,
-                            node: Box::new(node),
+                            node: Rc::new(node),
                         });
                     }
                 }
@@ -448,40 +448,33 @@ where
 }
 
 /// An entry yielded by [`Iter`]. Provides lazy access to the value.
-pub struct Entry<'a, K, V, M>
+pub struct LazyEntry<'a, K, V, M>
 where
     K: Storable + Ord + Clone,
     V: Storable,
     M: Memory,
 {
+    pub(crate) node: Rc<Node<K>>,
+    pub(crate) entry_idx: usize,
     pub(crate) map: &'a BTreeMap<K, V, M>,
-    pub(crate) node_addr: Address,
-    pub(crate) node: OnceCell<Node<K>>,
-    pub(crate) idx: usize,
 }
 
-impl<'a, K, V, M> Entry<'a, K, V, M>
+impl<'a, K, V, M> LazyEntry<'a, K, V, M>
 where
     K: Storable + Ord + Clone,
     V: Storable,
     M: Memory,
 {
-    fn node(&self) -> &Node<K> {
-        self.node.get_or_init(|| self.map.load_node(self.node_addr))
-    }
-
     /// Loads and returns the entry key.
-    pub fn key(&self) -> K {
-        self.node()
-            .key(self.idx, self.map.memory())
-            .clone()
+    pub fn key(&self) -> &K {
+        self.node.key(self.entry_idx, self.map.memory())
     }
 
     /// Loads and returns the entry value.
     pub fn value(&self) -> V {
         let encoded_value = self
-            .node()
-            .value(self.idx, self.map.memory());
+            .node
+            .value(self.entry_idx, self.map.memory());
         V::from_bytes(Cow::Borrowed(encoded_value))
     }
 }
@@ -498,15 +491,14 @@ where
     V: Storable,
     M: Memory,
 {
-    type Item = Entry<'_, K, V, M>;
+    type Item = LazyEntry<'_, K, V, M>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let map = self.0.map;
-        self.0.next_map(|node, entry_idx| Entry {
+        self.0.next_map(|node, entry_idx| LazyEntry {
+            node: Rc::clone(&node),
+            entry_idx,
             map,
-            node_addr: node.address(),
-            node: OnceCell::new(),
-            idx: entry_idx,
         })
     }
 
@@ -526,11 +518,10 @@ where
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         let map = self.0.map;
-        self.0.next_back_map(|node, entry_idx| Entry {
+        self.0.next_back_map(|node, entry_idx| LazyEntry {
+            node: Rc::clone(&node),
+            entry_idx,
             map,
-            node_addr: node.address(),
-            node: OnceCell::new(),
-            idx: entry_idx,
         })
     }
 }

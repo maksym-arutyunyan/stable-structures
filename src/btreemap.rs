@@ -1366,7 +1366,7 @@ mod test {
 
     /// A helper function to collect entries into a `Vec` of `(K, V)`.
     fn collect<'a, K: Clone, V: Clone, M: Memory>(
-        it: impl Iterator<Item = crate::btreemap::iter::Entry<'a, K, V, M>>,
+        it: impl Iterator<Item = crate::btreemap::iter::LazyEntry<'a, K, V, M>>,
     ) -> Vec<(K, V)> {
         it.map(|e| (e.key(), e.value())).collect()
     }
