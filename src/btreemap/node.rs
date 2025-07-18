@@ -187,6 +187,20 @@ impl<K: Storable + Ord + Clone> Node<K> {
         k.get_or_load(|offset, size| self.load_key_from_memory(offset, size, memory))
     }
 
+    #[inline(always)]
+    fn get_key_bytes<'a, M: Memory>(&'a self, (k, _): &'a LazyEntry<K>, memory: &M) -> Cow<'a, [u8]> {
+        match &k.0 {
+            LazyObject::ByVal(val) => val.to_bytes_checked(),
+            LazyObject::ByRef { offset, size, loaded } => {
+                if let Some(val) = loaded.get() {
+                    val.to_bytes_checked()
+                } else {
+                    Cow::Owned(self.load_key_bytes_from_memory(*offset, *size, memory))
+                }
+            }
+        }
+    }
+
     /// Returns a reference to the cached value and loads it from memory if needed.
     #[inline(always)]
     fn get_value<'a, M: Memory>(&'a self, (_, v): &'a LazyEntry<K>, memory: &M) -> &'a [u8] {
@@ -250,6 +264,40 @@ impl<K: Storable + Ord + Clone> Node<K> {
         read_to_vec(&reader, Address::from(offset.get()), &mut bytes, size);
 
         K::from_bytes(Cow::Borrowed(&bytes))
+    }
+
+    /// Loads the raw bytes of a key from stable memory at the given offset.
+    fn load_key_bytes_from_memory<M: Memory>(
+        &self,
+        mut offset: Bytes,
+        loaded_size: u32,
+        memory: &M,
+    ) -> Vec<u8> {
+        let reader = NodeReader {
+            address: self.address,
+            overflows: &self.overflows,
+            page_size: self.page_size(),
+            memory,
+        };
+
+        let size = match self.version {
+            Version::V1(_) => {
+                offset += U32_SIZE;
+                loaded_size
+            }
+            Version::V2(_) => {
+                if K::BOUND.is_fixed_size() {
+                    K::BOUND.max_size()
+                } else {
+                    offset += U32_SIZE;
+                    loaded_size
+                }
+            }
+        } as usize;
+
+        let mut bytes = Vec::with_capacity(size);
+        read_to_vec(&reader, Address::from(offset.get()), &mut bytes, size);
+        bytes
     }
 
     /// Loads a value from stable memory at the given offset.
@@ -459,8 +507,15 @@ impl<K: Storable + Ord + Clone> Node<K> {
     /// returned, containing the index where a matching key could be inserted
     /// while maintaining sorted order.
     pub fn search<M: Memory>(&self, key: &K, memory: &M) -> Result<usize, usize> {
-        self.entries
-            .binary_search_by_key(&key, |entry| self.get_key(entry, memory))
+        if let Some(key_bytes) = key.ord_bytes() {
+            self.entries.binary_search_by(|entry| {
+                let entry_bytes = self.get_key_bytes(entry, memory);
+                entry_bytes.as_ref().cmp(key_bytes.as_ref())
+            })
+        } else {
+            self.entries
+                .binary_search_by_key(&key, |entry| self.get_key(entry, memory))
+        }
     }
 
     /// Returns the maximum size a node can be if it has bounded keys and values.
